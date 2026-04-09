@@ -20,7 +20,7 @@ function mapAuthError(error) {
   }
 
   if (code === "auth/unauthorized-domain") {
-    return "This domain is not authorized in Firebase. Add localhost and 127.0.0.1 in Firebase Authentication authorized domains.";
+    return "This domain is not authorized in Firebase. Add localhost and 127.0.0.1 in Firebase Authentication > Settings > Authorized domains.";
   }
 
   if (code === "auth/configuration-not-found") {
@@ -31,7 +31,15 @@ function mapAuthError(error) {
     return "The Firebase API key is invalid. Please check your .env file.";
   }
 
-  return error?.message || "Google login failed.";
+  if (error?.message?.includes("Cannot reach backend")) {
+    return "Cannot reach backend. Ensure FastAPI is running on http://127.0.0.1:8000 and CORS includes your frontend origin.";
+  }
+
+  if (error?.message?.includes("401") || error?.message?.includes("Unauthorized")) {
+    return "Backend rejected your token. Check if serviceAccountKey.json is properly configured on the backend.";
+  }
+
+  return error?.message || "Google login failed. Check browser console for details.";
 }
 
 export default function App() {
@@ -51,8 +59,12 @@ export default function App() {
     setAuthLoading(true);
 
     try {
+      console.log("Opening Firebase popup...");
       const credentials = await signInWithPopup(auth, googleProvider);
+      console.log("Popup success! User:", credentials.user.email);
+      
       const token = await credentials.user.getIdToken();
+      console.log("Got ID token, verifying with backend...");
 
       // Keep Firebase sign-in state first so user can see auth succeeded.
       setUser(credentials.user);
@@ -61,9 +73,10 @@ export default function App() {
 
       // Send token to backend so middleware can verify Firebase auth.
       await verifyAccess(token);
+      console.log("Backend verification successful!");
       setIsAccessGranted(true);
     } catch (err) {
-      console.error("Firebase Auth Error:", err);
+      console.error("Auth Error:", err);
       const code = err?.code || "";
       const isFirebasePopupError = code.startsWith("auth/");
 
