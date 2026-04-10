@@ -7,10 +7,11 @@ from crewai import Agent, LLM
 
 # OpenRouter is used so the crew can run on low-cost or free hosted models.
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
-OPENROUTER_DEFAULT_MODEL = os.getenv(
-    "OPENROUTER_MODEL",
-    "openrouter/deepseek/deepseek-chat-v3-0324:free",
+DEFAULT_MODEL = os.getenv(
+    "CREWAI_MODEL",
+    os.getenv("OPENROUTER_MODEL", "deepseek/deepseek-chat-v3-0324:free"),
 )
+DEFAULT_API_BASE = os.getenv("CREWAI_API_BASE", OPENROUTER_BASE_URL)
 
 
 def build_openrouter_llm(model: str | None = None) -> LLM:
@@ -29,9 +30,9 @@ def build_openrouter_llm(model: str | None = None) -> LLM:
         raise ValueError("OPENROUTER_API_KEY is required for CrewAI agents")
 
     return LLM(
-        model=model or OPENROUTER_DEFAULT_MODEL,
+        model=model or DEFAULT_MODEL,
         api_key=api_key,
-        base_url=OPENROUTER_BASE_URL,
+        base_url=DEFAULT_API_BASE,
         temperature=0.1,
         max_tokens=700,
     )

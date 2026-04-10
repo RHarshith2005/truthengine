@@ -30,7 +30,11 @@ app = FastAPI(
 )
 
 
-# Enable CORS so the backend can safely serve a web client later.
+# Protect non-public endpoints with Firebase JWT verification.
+app.add_middleware(FirebaseAuthMiddleware)
+
+
+# Enable CORS so headers are included even when auth middleware returns errors.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins,
@@ -38,10 +42,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-
-# Protect non-public endpoints with Firebase JWT verification.
-app.add_middleware(FirebaseAuthMiddleware)
 
 
 # Register API routes under a versioned prefix.

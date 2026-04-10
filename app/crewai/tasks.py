@@ -53,7 +53,7 @@ class ReportOutput(BaseModel):
 
 
 # Build the pipeline with explicit task dependencies and short prompts.
-def build_fake_news_tasks(claim_text: str) -> list[Task]:
+def build_fake_news_tasks(claim_text: str, web_context: str = "") -> list[Task]:
     """Create the end-to-end fake news detection task chain.
 
     Importance:
@@ -69,8 +69,10 @@ def build_fake_news_tasks(claim_text: str) -> list[Task]:
     # Stage 1: gather background context and likely source references.
     research_task = Task(
         description=(
-            "Find concise background and source context for the claim:\n"
-            f"{claim_text}"
+            "Find concise background and source context for the claim using the provided web search results. "
+            "Prioritize verifiable sources and include source links in your summary.\n"
+            f"Claim: {claim_text}\n"
+            f"Web Search Results:\n{web_context}"
         ),
         expected_output="Short research summary with relevant sources.",
         agent=research_agent,
@@ -81,6 +83,7 @@ def build_fake_news_tasks(claim_text: str) -> list[Task]:
     fact_check_task = Task(
         description=(
             "Verify the claim using the research context and flag inconsistencies.\n"
+            "Decide if the claim is likely true, false, or uncertain based on cited evidence.\n"
             f"Claim: {claim_text}"
         ),
         expected_output="Evidence-based fact-check verdict with key points.",
@@ -93,6 +96,7 @@ def build_fake_news_tasks(claim_text: str) -> list[Task]:
     ml_prediction_task = Task(
         description=(
             "Predict whether the claim is fake or real using the available context.\n"
+            "Use label values only from this set: fake, real, uncertain.\n"
             f"Claim: {claim_text}"
         ),
         expected_output="One label, confidence score, and one-line rationale.",

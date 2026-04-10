@@ -1,16 +1,48 @@
 from __future__ import annotations
 
+import logging
+from datetime import datetime, timezone
+
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
-from crewai import Crew, Process
+from app.config import settings
 
-from app.crewai.tasks import AnalysisOutput, ReportOutput, build_fake_news_tasks
+logger = logging.getLogger(__name__)
+
+
+class AnalysisOutput(BaseModel):
+    final_verdict: str
+    reasoning: list[str] = Field(default_factory=list)
+    confidence: float = Field(ge=0.0, le=1.0)
+
+
+class ReportOutput(BaseModel):
+    headline: str
+    report: str
+    recommendation: str
+
+
+def build_fake_news_tasks(*_, **__):
+    return []
+
+
+if settings.crewai_enabled:
+    try:
+        from crewai import Crew, Process
+        from app.crewai.tasks import AnalysisOutput, ReportOutput, build_fake_news_tasks
+        CREW_PIPELINE_AVAILABLE = True
+    except Exception as exc:  # pragma: no cover - defensive startup guard
+        CREW_PIPELINE_AVAILABLE = False
+        logger.warning("CrewAI pipeline disabled at startup: %s", exc)
+else:
+    CREW_PIPELINE_AVAILABLE = False
 from app.models.prediction import PredictionCreate, PredictionRecord
 from app.services.prediction_service import (
     fetch_user_history_by_user_id,
     save_prediction_result,
 )
+from app.services.web_research import build_web_context
 
 
 router = APIRouter(tags=["Fake News"])
@@ -30,7 +62,7 @@ class AnalyzeResponse(BaseModel):
     confidence: float
     analysis: AnalysisOutput
     report: ReportOutput
-    stored_result: PredictionRecord
+    stored_result: PredictionRecord | None = None
 
 
 class HistoryResponse(BaseModel):
@@ -52,7 +84,26 @@ def _run_fake_news_pipeline(text: str) -> tuple[AnalysisOutput, ReportOutput]:
     Pass in the article or claim text and receive the final analysis plus
     report objects produced by the CrewAI task chain.
     """
-    tasks = build_fake_news_tasks(text)
+    if not CREW_PIPELINE_AVAILABLE:
+        analysis_output = AnalysisOutput(
+            final_verdict="Analysis temporarily unavailable",
+            reasoning=["CrewAI dependencies are not available on the backend."],
+            confidence=0.0,
+        )
+        report_output = ReportOutput(
+            headline="Service temporarily limited",
+            report="Authentication and protected routes are available, but AI analysis is temporarily unavailable.",
+            recommendation="Install optional CrewAI LLM dependencies to enable full analysis.",
+        )
+        return analysis_output, report_output
+
+    try:
+        web_context = build_web_context(text)
+    except Exception as exc:  # pragma: no cover - external provider variability
+        logger.warning("Web research step failed, continuing without live search: %s", exc)
+        web_context = "Web search is currently unavailable; continue using general and contextual knowledge only."
+
+    tasks = build_fake_news_tasks(text, web_context=web_context)
     crew = Crew(
         tasks=tasks,
         process=Process.sequential,
@@ -105,17 +156,34 @@ async def analyze_fake_news(request: Request, payload: AnalyzeRequest) -> Analyz
         raise HTTPException(status_code=401, detail="Unauthorized")
 
     # Run the CrewAI chain to get the structured analysis and report output.
-    analysis_output, report_output = _run_fake_news_pipeline(payload.text)
+    try:
+        analysis_output, report_output = _run_fake_news_pipeline(payload.text)
+    except Exception as exc:
+        logger.exception("Analyze pipeline failed: %s", exc)
+        raise HTTPException(status_code=503, detail="Analysis pipeline is currently unavailable") from exc
 
     # Persist the final prediction so history can be queried later.
-    stored_result = await save_prediction_result(
-        PredictionCreate(
+    stored_result: PredictionRecord | None = None
+    try:
+        stored_result = await save_prediction_result(
+            PredictionCreate(
+                user_id=user_id,
+                text=payload.text,
+                prediction_label=analysis_output.final_verdict,
+                confidence=analysis_output.confidence,
+            )
+        )
+    except Exception as exc:
+        logger.warning("Prediction persistence skipped: %s", exc)
+        # Return analysis result even when storage is unavailable.
+        stored_result = PredictionRecord(
+            id="not-persisted",
             user_id=user_id,
             text=payload.text,
             prediction_label=analysis_output.final_verdict,
             confidence=analysis_output.confidence,
+            created_at=datetime.now(timezone.utc),
         )
-    )
 
     return AnalyzeResponse(
         user_id=user_id,

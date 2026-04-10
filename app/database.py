@@ -18,14 +18,19 @@ async def connect_to_mongo() -> None:
     global client, database
 
     try:
-        client = AsyncIOMotorClient(settings.mongodb_uri)
+        client = AsyncIOMotorClient(
+            settings.mongodb_uri,
+            serverSelectionTimeoutMS=3000,
+            connectTimeoutMS=3000,
+            socketTimeoutMS=3000,
+        )
         database = client[settings.mongodb_db_name]
-
-        # Create the predictions collection up front so the service layer can rely on it.
-        await ensure_predictions_collection()
 
         # Force a round-trip so connection issues appear early.
         await client.admin.command("ping")
+
+        # Create the predictions collection up front so the service layer can rely on it.
+        await ensure_predictions_collection()
     except Exception:
         client = None
         database = None

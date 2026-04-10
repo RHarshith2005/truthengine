@@ -1,5 +1,17 @@
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://localhost:8000";
 
+function getAlternativeBaseUrl(baseUrl) {
+  if (baseUrl.includes("127.0.0.1")) {
+    return baseUrl.replace("127.0.0.1", "localhost");
+  }
+
+  if (baseUrl.includes("localhost")) {
+    return baseUrl.replace("localhost", "127.0.0.1");
+  }
+
+  return null;
+}
+
 function getAuthHeaders(token) {
   return {
     Authorization: `Bearer ${token}`,
@@ -23,9 +35,36 @@ async function parseResponse(response, fallbackMessage) {
   return payload;
 }
 
+async function requestWithHostFallback(path, options) {
+  const primaryUrl = `${API_BASE_URL}${path}`;
+
+  try {
+    return await fetch(primaryUrl, options);
+  } catch (err) {
+    if (err?.name !== "TypeError") {
+      throw err;
+    }
+
+    const alternativeBaseUrl = getAlternativeBaseUrl(API_BASE_URL);
+    if (!alternativeBaseUrl) {
+      throw err;
+    }
+
+    const fallbackUrl = `${alternativeBaseUrl}${path}`;
+    return await fetch(fallbackUrl, options);
+  }
+}
+
+function buildBackendUnavailableError() {
+  const origin = typeof window !== "undefined" ? window.location.origin : "unknown-origin";
+  return new Error(
+    `Cannot reach backend at ${API_BASE_URL}. Frontend origin: ${origin}. Ensure FastAPI is running and CORS allows this origin.`
+  );
+}
+
 export async function verifyAccess(token) {
   try {
-    const response = await fetch(`${API_BASE_URL}/api/v1/protected/me`, {
+    const response = await requestWithHostFallback("/api/v1/protected/me", {
       method: "GET",
       headers: getAuthHeaders(token),
     });
@@ -33,9 +72,7 @@ export async function verifyAccess(token) {
     return parseResponse(response, "Backend token verification failed.");
   } catch (err) {
     if (err?.name === "TypeError") {
-      throw new Error(
-        "Cannot reach backend. Ensure FastAPI is running and CORS includes your frontend origin."
-      );
+      throw buildBackendUnavailableError();
     }
     throw err;
   }
@@ -43,7 +80,7 @@ export async function verifyAccess(token) {
 
 export async function analyzeNews(token, text) {
   try {
-    const response = await fetch(`${API_BASE_URL}/api/v1/analyze`, {
+    const response = await requestWithHostFallback("/api/v1/analyze", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -55,7 +92,7 @@ export async function analyzeNews(token, text) {
     return parseResponse(response, "Analysis request failed.");
   } catch (err) {
     if (err?.name === "TypeError") {
-      throw new Error("Cannot reach backend. Please check API server and CORS configuration.");
+      throw buildBackendUnavailableError();
     }
     throw err;
   }
