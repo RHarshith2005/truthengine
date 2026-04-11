@@ -1,10 +1,10 @@
 """CrewAI integration package."""
 
 from app.crewai.agents import (
-	analyst_agent,
-	fact_check_agent,
-	ml_agent,
-	research_agent,
-	report_agent,
+	get_analyst_agent,
+	get_fact_check_agent,
+	get_ml_agent,
+	get_research_agent,
+	get_report_agent,
 )
 from app.crewai.tasks import build_fake_news_tasks

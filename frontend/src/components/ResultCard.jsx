@@ -3,6 +3,13 @@ function formatConfidence(value) {
   return `${Math.round(value * 100)}%`;
 }
 
+function getPredictionColor(prediction) {
+  const p = (prediction || "").toLowerCase();
+  if (p === "fake") return "#c0392b";
+  if (p === "real") return "#1a7a4a";
+  return "#b7640a";
+}
+
 export default function ResultCard({ result }) {
   if (!result) {
     return (
@@ -19,7 +26,9 @@ export default function ResultCard({ result }) {
       <div className="result-grid">
         <div>
           <p className="label">Prediction</p>
-          <p className="value">{result.prediction}</p>
+          <p className="value" style={{ color: getPredictionColor(result.prediction) }}>
+            {result.prediction}
+          </p>
         </div>
         <div>
           <p className="label">Confidence</p>

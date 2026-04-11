@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import datetime, timezone
 
@@ -46,6 +47,14 @@ from app.services.web_research import build_web_context
 
 
 router = APIRouter(tags=["Fake News"])
+
+
+@router.get("/status")
+async def pipeline_status() -> dict:
+    return {
+        "crewai_enabled": settings.crewai_enabled,
+        "pipeline_available": CREW_PIPELINE_AVAILABLE,
+    }
 
 
 class AnalyzeRequest(BaseModel):
@@ -157,7 +166,18 @@ async def analyze_fake_news(request: Request, payload: AnalyzeRequest) -> Analyz
 
     # Run the CrewAI chain to get the structured analysis and report output.
     try:
-        analysis_output, report_output = _run_fake_news_pipeline(payload.text)
+        try:
+            analysis_output, report_output = await asyncio.wait_for(
+                asyncio.to_thread(_run_fake_news_pipeline, payload.text),
+                timeout=90.0,
+            )
+        except asyncio.TimeoutError:
+            raise HTTPException(
+                status_code=503,
+                detail="Analysis timed out after 90 seconds. The AI pipeline is under heavy load. Please try again.",
+            )
+    except HTTPException:
+        raise
     except Exception as exc:
         logger.exception("Analyze pipeline failed: %s", exc)
         raise HTTPException(status_code=503, detail="Analysis pipeline is currently unavailable") from exc

@@ -1,4 +1,4 @@
-export default function AnalyzerForm({ text, onTextChange, onAnalyze, loading, disabled }) {
+export default function AnalyzerForm({ text, onTextChange, onAnalyze, loading, disabled, analysisStep }) {
   return (
     <section className="panel">
       <p className="section-title">Text Input</p>
@@ -17,6 +17,12 @@ export default function AnalyzerForm({ text, onTextChange, onAnalyze, loading, d
       >
         {loading ? "Analyzing..." : "Analyze"}
       </button>
+
+      {loading && analysisStep && (
+        <p style={{ margin: "8px 0 0", fontSize: "13px", color: "#5b6f76" }}>
+          ⚙ {analysisStep}
+        </p>
+      )}
     </section>
   );
 }

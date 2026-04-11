@@ -5,7 +5,7 @@ import { auth, googleProvider } from "./firebase";
 import GoogleLogin from "./components/GoogleLogin";
 import AnalyzerForm from "./components/AnalyzerForm";
 import ResultCard from "./components/ResultCard";
-import { analyzeNews, verifyAccess } from "./services/api";
+import { analyzeNews, verifyAccess, getFreshToken } from "./services/api";
 import "./styles.css";
 
 function mapAuthError(error) {
@@ -51,6 +51,7 @@ export default function App() {
   const [error, setError] = useState("");
   const [authLoading, setAuthLoading] = useState(false);
   const [analyzeLoading, setAnalyzeLoading] = useState(false);
+  const [analysisStep, setAnalysisStep] = useState("");
 
   const canAnalyze = useMemo(() => Boolean(user && idToken && isAccessGranted), [user, idToken, isAccessGranted]);
 
@@ -118,9 +119,14 @@ export default function App() {
 
     setError("");
     setAnalyzeLoading(true);
+    setAnalysisStep("Searching the web for context...");
+    const stepTimer1 = setTimeout(() => setAnalysisStep("Running fact-check agents..."), 8000);
+    const stepTimer2 = setTimeout(() => setAnalysisStep("Building final verdict..."), 20000);
 
     try {
-      const payload = await analyzeNews(idToken, text);
+      const freshToken = await getFreshToken(user);
+      setIdToken(freshToken);
+      const payload = await analyzeNews(freshToken, text);
 
       setResult({
         prediction: payload.label || payload.analysis?.final_verdict || "Unknown",
@@ -135,6 +141,9 @@ export default function App() {
     } catch (err) {
       setError(err?.message || "Unable to complete analysis.");
     } finally {
+      clearTimeout(stepTimer1);
+      clearTimeout(stepTimer2);
+      setAnalysisStep("");
       setAnalyzeLoading(false);
     }
   }
@@ -166,6 +175,7 @@ export default function App() {
           onAnalyze={handleAnalyze}
           loading={analyzeLoading}
           disabled={!canAnalyze}
+          analysisStep={analysisStep}
         />
 
         {error ? <p className="error-box">{error}</p> : null}

@@ -5,11 +5,11 @@ from pydantic import BaseModel, Field
 from crewai import Task
 
 from app.crewai.agents import (
-    analyst_agent,
-    fact_check_agent,
-    ml_agent,
-    research_agent,
-    report_agent,
+    get_analyst_agent,
+    get_fact_check_agent,
+    get_ml_agent,
+    get_research_agent,
+    get_report_agent,
 )
 
 
@@ -75,7 +75,7 @@ def build_fake_news_tasks(claim_text: str, web_context: str = "") -> list[Task]:
             f"Web Search Results:\n{web_context}"
         ),
         expected_output="Short research summary with relevant sources.",
-        agent=research_agent,
+        agent=get_research_agent(),
         output_pydantic=ResearchOutput,
     )
 
@@ -87,7 +87,7 @@ def build_fake_news_tasks(claim_text: str, web_context: str = "") -> list[Task]:
             f"Claim: {claim_text}"
         ),
         expected_output="Evidence-based fact-check verdict with key points.",
-        agent=fact_check_agent,
+        agent=get_fact_check_agent(),
         context=[research_task],
         output_pydantic=FactCheckOutput,
     )
@@ -100,7 +100,7 @@ def build_fake_news_tasks(claim_text: str, web_context: str = "") -> list[Task]:
             f"Claim: {claim_text}"
         ),
         expected_output="One label, confidence score, and one-line rationale.",
-        agent=ml_agent,
+        agent=get_ml_agent(),
         context=[research_task, fact_check_task],
         output_pydantic=MLPredictionOutput,
     )
@@ -109,7 +109,7 @@ def build_fake_news_tasks(claim_text: str, web_context: str = "") -> list[Task]:
     analysis_task = Task(
         description="Combine research, fact-check, and ML results into one final decision.",
         expected_output="Merged verdict with concise reasoning and overall confidence.",
-        agent=analyst_agent,
+        agent=get_analyst_agent(),
         context=[research_task, fact_check_task, ml_prediction_task],
         output_pydantic=AnalysisOutput,
     )
@@ -118,7 +118,7 @@ def build_fake_news_tasks(claim_text: str, web_context: str = "") -> list[Task]:
     final_report_task = Task(
         description="Create the final user-facing fake news report from the analysis output.",
         expected_output="Short headline, report, and recommendation.",
-        agent=report_agent,
+        agent=get_report_agent(),
         context=[analysis_task],
         output_pydantic=ReportOutput,
     )

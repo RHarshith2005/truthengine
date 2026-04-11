@@ -24,7 +24,14 @@ class FirebaseAuthMiddleware(BaseHTTPMiddleware):
 
     def __init__(self, app, public_paths: list[str] | None = None):
         super().__init__(app)
-        self.public_paths = public_paths or ["/", "/docs", "/openapi.json", "/redoc", "/api/v1/health"]
+        self.public_paths = public_paths or [
+            "/",
+            "/docs",
+            "/openapi.json",
+            "/redoc",
+            "/api/v1/health",
+            "/api/v1/status",
+        ]
 
     async def dispatch(self, request: Request, call_next):
         # Allow public documentation and health endpoints without a token.

@@ -62,6 +62,12 @@ function buildBackendUnavailableError() {
   );
 }
 
+export async function getFreshToken(firebaseUser) {
+  if (!firebaseUser) throw new Error("No user logged in.");
+  // forceRefresh=true gets a new token even if the current one is not expired yet
+  return await firebaseUser.getIdToken(true);
+}
+
 export async function verifyAccess(token) {
   try {
     const response = await requestWithHostFallback("/api/v1/protected/me", {

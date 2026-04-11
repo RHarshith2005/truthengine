@@ -154,7 +154,8 @@ h1 {
 }
 
 .analyze-btn {
-  width: 170px;
+  min-width: 170px;
+  width: auto;
 }
 
 .result-grid {

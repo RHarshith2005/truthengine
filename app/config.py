@@ -29,7 +29,7 @@ class Settings(BaseSettings):
     mongodb_predictions_collection: str = Field(default="predictions")
 
     # CrewAI-related configuration hooks can be expanded later.
-    crewai_enabled: bool = Field(default=False)
+    crewai_enabled: bool = Field(default=True)
     crewai_model: str = Field(default="gpt-4o-mini")
     crewai_api_base: AnyHttpUrl | None = Field(default=None)
 
