@@ -21,7 +21,7 @@ class Settings(BaseSettings):
     api_v1_prefix: str = Field(default="/api/v1")
 
     # Comma-separated origins can be added later through the environment.
-    cors_origins: list[str] = Field(default_factory=lambda: ["*"])
+    cors_origins: list[str] = Field(default_factory=lambda: ["http://localhost:5173", "http://127.0.0.1:5173"])
 
     # MongoDB settings are prepared for future integration.
     mongodb_uri: str = Field(default="mongodb://localhost:27017")

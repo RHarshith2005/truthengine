@@ -1,10 +1,4 @@
-"""CrewAI integration package."""
+"""CrewAI integration package — single-agent fake news analyzer."""
 
-from app.crewai.agents import (
-	get_analyst_agent,
-	get_fact_check_agent,
-	get_ml_agent,
-	get_research_agent,
-	get_report_agent,
-)
-from app.crewai.tasks import build_fake_news_tasks
+from app.crewai.agents import get_fake_news_analyst
+from app.crewai.tasks import build_fake_news_task, FakeNewsVerdict

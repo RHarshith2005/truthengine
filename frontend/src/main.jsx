@@ -1,9 +1,13 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
+import { BrowserRouter } from "react-router-dom";
+import App from "./App.jsx";
+import "./styles.css";
 
-import App from "./App";
-
-// Don't use React.StrictMode for authentication flows - it causes mount/unmount issues with popups
 ReactDOM.createRoot(document.getElementById("root")).render(
-  <App />
+  <React.StrictMode>
+    <BrowserRouter>
+      <App />
+    </BrowserRouter>
+  </React.StrictMode>
 );

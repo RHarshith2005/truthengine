@@ -6,3 +6,4 @@ pydantic-settings>=2.4.0
 firebase-admin>=6.5.0
 crewai>=0.86.0
 duckduckgo-search>=6.3.0
+litellm>=1.40.0

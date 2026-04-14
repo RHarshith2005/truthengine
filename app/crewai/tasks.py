@@ -4,129 +4,86 @@ from pydantic import BaseModel, Field
 
 from crewai import Task
 
-from app.crewai.agents import (
-    get_analyst_agent,
-    get_fact_check_agent,
-    get_ml_agent,
-    get_research_agent,
-    get_report_agent,
-)
+from app.crewai.agents import get_fake_news_analyst
 
 
-class ResearchOutput(BaseModel):
-    """Structured output for the research stage."""
+class FakeNewsVerdict(BaseModel):
+    """Complete structured output from the single-agent analysis."""
 
-    summary: str = Field(..., description="Short background summary")
-    key_sources: list[str] = Field(default_factory=list, description="Relevant source names or URLs")
-
-
-class FactCheckOutput(BaseModel):
-    """Structured output for the fact-check stage."""
-
-    verdict: str = Field(..., description="Short evidence-based verdict")
-    supporting_points: list[str] = Field(default_factory=list, description="Main evidence points")
-    risk_flags: list[str] = Field(default_factory=list, description="Warnings or contradictions")
-
-
-class MLPredictionOutput(BaseModel):
-    """Structured output for the ML prediction stage."""
-
-    label: str = Field(..., description="fake or real")
-    confidence: float = Field(..., ge=0.0, le=1.0, description="Prediction confidence")
-    rationale: str = Field(..., description="One-line model rationale")
-
-
-class AnalysisOutput(BaseModel):
-    """Structured output for the analysis stage."""
-
-    final_verdict: str = Field(..., description="Combined decision")
-    reasoning: list[str] = Field(default_factory=list, description="Top reasons used in the decision")
-    confidence: float = Field(..., ge=0.0, le=1.0, description="Overall confidence")
-
-
-class ReportOutput(BaseModel):
-    """Structured output for the final report stage."""
-
-    headline: str = Field(..., description="Short summary headline")
-    report: str = Field(..., description="Final user-facing report")
-    recommendation: str = Field(..., description="Suggested next action")
+    verdict: str = Field(
+        ...,
+        description="One of: REAL, FAKE, or UNVERIFIED",
+    )
+    confidence: float = Field(
+        ...,
+        ge=0.0,
+        le=1.0,
+        description="Confidence score between 0.0 and 1.0",
+    )
+    reasoning: list[str] = Field(
+        default_factory=list,
+        description="Key evidence points that support the verdict",
+    )
+    sources: list[str] = Field(
+        default_factory=list,
+        description="Source names or URLs referenced during analysis",
+    )
+    headline: str = Field(
+        ...,
+        description="Short one-line summary of the analysis",
+    )
+    report: str = Field(
+        ...,
+        description="Detailed user-facing explanation of the verdict",
+    )
+    recommendation: str = Field(
+        ...,
+        description="Suggested next action for the reader",
+    )
 
 
-# Build the pipeline with explicit task dependencies and short prompts.
-def build_fake_news_tasks(claim_text: str, web_context: str = "") -> list[Task]:
-    """Create the end-to-end fake news detection task chain.
+def build_fake_news_task(claim_text: str, web_context: str = "") -> Task:
+    """Create a single comprehensive fake-news detection task.
 
-    Importance:
-    This keeps the pipeline deterministic, reusable, and easy to debug.
-    Each task receives prior outputs through `context`, which prevents prompt
-    repetition, lowers token usage, and makes stage-to-stage reasoning clear.
-
-    Usage:
-    Call this with the article or claim text, then pass the returned tasks to
-    a Crew in the same order. The resulting chain is ready for execution with
-    structured outputs at every step.
+    Instead of chaining 5 separate tasks through 5 agents, this puts
+    everything into one well-structured prompt for a single agent.
+    One LLM call = faster, cheaper, and far more reliable.
     """
-    # Stage 1: gather background context and likely source references.
-    research_task = Task(
-        description=(
-            "Find concise background and source context for the claim using the provided web search results. "
-            "Prioritize verifiable sources and include source links in your summary.\n"
-            f"Claim: {claim_text}\n"
-            f"Web Search Results:\n{web_context}"
+    prompt = (
+        "You are analyzing a claim or news excerpt to determine if it is real or fake.\n\n"
+        "## CLAIM TO ANALYZE\n"
+        f"{claim_text}\n\n"
+    )
+
+    if web_context and web_context.strip():
+        prompt += (
+            "## WEB SEARCH RESULTS (use these as evidence)\n"
+            f"{web_context}\n\n"
+        )
+
+    prompt += (
+        "## YOUR TASK\n"
+        "Perform a complete fact-check analysis in a single pass:\n"
+        "1. **Research**: Identify key claims, entities, and context from the text and web results.\n"
+        "2. **Fact-Check**: Compare the claims against the evidence. Flag contradictions or confirmations.\n"
+        "3. **Verdict**: Decide if the claim is REAL, FAKE, or UNVERIFIED.\n"
+        "4. **Report**: Write a clear, concise report explaining your reasoning.\n\n"
+        "## IMPORTANT RULES\n"
+        "- verdict MUST be exactly one of: REAL, FAKE, UNVERIFIED\n"
+        "- confidence MUST be a decimal between 0.0 and 1.0\n"
+        "- reasoning MUST be a list of short evidence-based points\n"
+        "- Be direct and evidence-based. Do not add filler.\n"
+        "- If evidence is insufficient, use UNVERIFIED with lower confidence.\n"
+    )
+
+    return Task(
+        description=prompt,
+        expected_output=(
+            "A JSON object with: verdict (REAL/FAKE/UNVERIFIED), confidence (0-1), "
+            "reasoning (list of evidence points), sources (list of URLs or names), "
+            "headline (one-line summary), report (detailed explanation), "
+            "recommendation (suggested action)."
         ),
-        expected_output="Short research summary with relevant sources.",
-        agent=get_research_agent(),
-        output_pydantic=ResearchOutput,
+        agent=get_fake_news_analyst(),
+        output_pydantic=FakeNewsVerdict,
     )
-
-    # Stage 2: verify the claim using the research stage as supporting context.
-    fact_check_task = Task(
-        description=(
-            "Verify the claim using the research context and flag inconsistencies.\n"
-            "Decide if the claim is likely true, false, or uncertain based on cited evidence.\n"
-            f"Claim: {claim_text}"
-        ),
-        expected_output="Evidence-based fact-check verdict with key points.",
-        agent=get_fact_check_agent(),
-        context=[research_task],
-        output_pydantic=FactCheckOutput,
-    )
-
-    # Stage 3: run the prediction step with both research and fact-check context.
-    ml_prediction_task = Task(
-        description=(
-            "Predict whether the claim is fake or real using the available context.\n"
-            "Use label values only from this set: fake, real, uncertain.\n"
-            f"Claim: {claim_text}"
-        ),
-        expected_output="One label, confidence score, and one-line rationale.",
-        agent=get_ml_agent(),
-        context=[research_task, fact_check_task],
-        output_pydantic=MLPredictionOutput,
-    )
-
-    # Stage 4: combine all prior evidence into one final analytical judgment.
-    analysis_task = Task(
-        description="Combine research, fact-check, and ML results into one final decision.",
-        expected_output="Merged verdict with concise reasoning and overall confidence.",
-        agent=get_analyst_agent(),
-        context=[research_task, fact_check_task, ml_prediction_task],
-        output_pydantic=AnalysisOutput,
-    )
-
-    # Stage 5: generate the user-facing report from the analysis result.
-    final_report_task = Task(
-        description="Create the final user-facing fake news report from the analysis output.",
-        expected_output="Short headline, report, and recommendation.",
-        agent=get_report_agent(),
-        context=[analysis_task],
-        output_pydantic=ReportOutput,
-    )
-
-    return [
-        research_task,
-        fact_check_task,
-        ml_prediction_task,
-        analysis_task,
-        final_report_task,
-    ]

@@ -12,10 +12,15 @@ from app.config import settings
 logger = logging.getLogger(__name__)
 
 
+# ---------------------------------------------------------------------------
+# Response schemas
+# ---------------------------------------------------------------------------
+
 class AnalysisOutput(BaseModel):
     final_verdict: str
     reasoning: list[str] = Field(default_factory=list)
     confidence: float = Field(ge=0.0, le=1.0)
+    sources: list[str] = Field(default_factory=list)
 
 
 class ReportOutput(BaseModel):
@@ -24,20 +29,27 @@ class ReportOutput(BaseModel):
     recommendation: str
 
 
-def build_fake_news_tasks(*_, **__):
-    return []
+# ---------------------------------------------------------------------------
+# CrewAI single-agent pipeline setup
+# ---------------------------------------------------------------------------
 
+# Fallback no-op so the route still loads if crewai is missing.
+def _noop_task(*_, **__):
+    return None
+
+build_fake_news_task = _noop_task
 
 if settings.crewai_enabled:
     try:
         from crewai import Crew, Process
-        from app.crewai.tasks import AnalysisOutput, ReportOutput, build_fake_news_tasks
+        from app.crewai.tasks import build_fake_news_task, FakeNewsVerdict
         CREW_PIPELINE_AVAILABLE = True
-    except Exception as exc:  # pragma: no cover - defensive startup guard
+    except Exception as exc:  # pragma: no cover
         CREW_PIPELINE_AVAILABLE = False
         logger.warning("CrewAI pipeline disabled at startup: %s", exc)
 else:
     CREW_PIPELINE_AVAILABLE = False
+
 from app.models.prediction import PredictionCreate, PredictionRecord
 from app.services.prediction_service import (
     fetch_user_history_by_user_id,
@@ -81,17 +93,14 @@ class HistoryResponse(BaseModel):
     items: list[PredictionRecord]
 
 
-# Run the CrewAI pipeline in one place so the route stays thin and reusable.
+# ---------------------------------------------------------------------------
+# Pipeline runner — single agent, single task
+# ---------------------------------------------------------------------------
+
 def _run_fake_news_pipeline(text: str) -> tuple[AnalysisOutput, ReportOutput]:
-    """Execute the research-to-report pipeline and return structured results.
+    """Execute the single-agent CrewAI pipeline and return structured results.
 
-    Importance:
-    Keeping execution inside a helper makes the route easier to read and
-    simplifies later replacement with a background job or queue worker.
-
-    Usage:
-    Pass in the article or claim text and receive the final analysis plus
-    report objects produced by the CrewAI task chain.
+    One agent, one task, one LLM call — simple, fast, and reliable.
     """
     if not CREW_PIPELINE_AVAILABLE:
         analysis_output = AnalysisOutput(
@@ -106,56 +115,62 @@ def _run_fake_news_pipeline(text: str) -> tuple[AnalysisOutput, ReportOutput]:
         )
         return analysis_output, report_output
 
+    # Step 1: Gather web evidence for the claim.
     try:
         web_context = build_web_context(text)
-    except Exception as exc:  # pragma: no cover - external provider variability
+    except Exception as exc:  # pragma: no cover
         logger.warning("Web research step failed, continuing without live search: %s", exc)
         web_context = "Web search is currently unavailable; continue using general and contextual knowledge only."
 
-    tasks = build_fake_news_tasks(text, web_context=web_context)
+    # Step 2: Build the single task and run it through one agent.
+    task = build_fake_news_task(text, web_context=web_context)
     crew = Crew(
-        tasks=tasks,
+        agents=[task.agent],
+        tasks=[task],
         process=Process.sequential,
         verbose=False,
     )
-    result = crew.kickoff(inputs={"claim_text": text})
+    result = crew.kickoff()
 
-    # Prefer structured outputs stored on the executed tasks.
-    analysis_output = None
-    report_output = None
-    for task in tasks:
-        task_output = getattr(task, "output", None)
-        structured_output = getattr(task_output, "pydantic", None) if task_output else None
+    # Step 3: Extract the structured output.
+    task_output = getattr(task, "output", None)
+    structured = getattr(task_output, "pydantic", None) if task_output else None
 
-        if isinstance(structured_output, AnalysisOutput):
-            analysis_output = structured_output
-        elif isinstance(structured_output, ReportOutput):
-            report_output = structured_output
-
-    if analysis_output is not None and report_output is not None:
+    if structured and hasattr(structured, "verdict"):
+        # Successfully got FakeNewsVerdict from the task output.
+        analysis_output = AnalysisOutput(
+            final_verdict=structured.verdict,
+            reasoning=structured.reasoning,
+            confidence=structured.confidence,
+            sources=getattr(structured, "sources", []),
+        )
+        report_output = ReportOutput(
+            headline=structured.headline,
+            report=structured.report,
+            recommendation=structured.recommendation,
+        )
         return analysis_output, report_output
 
-    # Fall back to the returned result when task-level structured output is not available.
-    if isinstance(result, ReportOutput):
-        report_output = result
-    elif isinstance(result, dict):
-        report_output = ReportOutput.model_validate(result)
-    else:
-        report_output = ReportOutput(
-            headline="Analysis complete",
-            report=str(result),
-            recommendation="Review the report details before sharing.",
-        )
+    # Fallback: parse from crew result if structured output wasn't captured.
+    raw = str(result)
+    logger.info("Using raw crew result as fallback: %s", raw[:300])
 
-    if analysis_output is None:
-        analysis_output = AnalysisOutput(
-            final_verdict=report_output.report,
-            reasoning=[report_output.recommendation],
-            confidence=0.5,
-        )
-
+    analysis_output = AnalysisOutput(
+        final_verdict="UNVERIFIED",
+        reasoning=["Analysis completed but structured output could not be parsed."],
+        confidence=0.5,
+    )
+    report_output = ReportOutput(
+        headline="Analysis complete",
+        report=raw,
+        recommendation="Review the report details before sharing.",
+    )
     return analysis_output, report_output
 
+
+# ---------------------------------------------------------------------------
+# Routes
+# ---------------------------------------------------------------------------
 
 @router.post("/analyze", response_model=AnalyzeResponse)
 async def analyze_fake_news(request: Request, payload: AnalyzeRequest) -> AnalyzeResponse:
@@ -164,17 +179,17 @@ async def analyze_fake_news(request: Request, payload: AnalyzeRequest) -> Analyz
     if not user_id:
         raise HTTPException(status_code=401, detail="Unauthorized")
 
-    # Run the CrewAI chain to get the structured analysis and report output.
+    # Run the single-agent CrewAI pipeline.
     try:
         try:
             analysis_output, report_output = await asyncio.wait_for(
                 asyncio.to_thread(_run_fake_news_pipeline, payload.text),
-                timeout=90.0,
+                timeout=120.0,
             )
         except asyncio.TimeoutError:
             raise HTTPException(
                 status_code=503,
-                detail="Analysis timed out after 90 seconds. The AI pipeline is under heavy load. Please try again.",
+                detail="Analysis timed out after 120 seconds. The AI pipeline is under heavy load. Please try again.",
             )
     except HTTPException:
         raise

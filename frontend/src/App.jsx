@@ -1,187 +1,125 @@
-import { useMemo, useState } from "react";
+import { useState, useCallback } from "react";
+import { Routes, Route, Navigate } from "react-router-dom";
 import { signInWithPopup, signOut } from "firebase/auth";
 
 import { auth, googleProvider } from "./firebase";
-import GoogleLogin from "./components/GoogleLogin";
-import AnalyzerForm from "./components/AnalyzerForm";
-import ResultCard from "./components/ResultCard";
-import { analyzeNews, verifyAccess, getFreshToken } from "./services/api";
-import "./styles.css";
+import { verifyAccess, getFreshToken } from "./services/api";
+
+import LoginPage from "./pages/LoginPage";
+import AnalyzePage from "./pages/AnalyzePage";
+import HistoryPage from "./pages/HistoryPage";
 
 function mapAuthError(error) {
   const code = error?.code || "";
-
-  if (code === "auth/popup-closed-by-user") {
-    return "Login popup was closed before sign-in completed.";
-  }
-
-  if (code === "auth/popup-blocked") {
-    return "Popup was blocked by the browser. Allow popups for this site and try again.";
-  }
-
-  if (code === "auth/unauthorized-domain") {
-    return "This domain is not authorized in Firebase. Add localhost and 127.0.0.1 in Firebase Authentication > Settings > Authorized domains.";
-  }
-
-  if (code === "auth/configuration-not-found") {
-    return "Google Authentication is not enabled in your Firebase project. Please enable it in the Firebase Console (Authentication > Sign-in method).";
-  }
-
-  if (code === "auth/invalid-api-key") {
-    return "The Firebase API key is invalid. Please check your .env file.";
-  }
-
-  if (error?.message?.includes("Cannot reach backend")) {
-    return "Cannot reach backend. Ensure FastAPI is running on http://127.0.0.1:8000 and CORS includes your frontend origin.";
-  }
-
-  if (error?.message?.includes("401") || error?.message?.includes("Unauthorized")) {
-    return "Backend rejected your token. Check if serviceAccountKey.json is properly configured on the backend.";
-  }
-
-  return error?.message || "Google login failed. Check browser console for details.";
+  if (code === "auth/popup-closed-by-user") return "Login popup was closed before sign-in completed.";
+  if (code === "auth/popup-blocked") return "Popup was blocked by the browser. Allow popups and try again.";
+  if (code === "auth/unauthorized-domain") return "This domain is not authorized in Firebase. Add localhost in Firebase Console.";
+  if (code === "auth/configuration-not-found") return "Google Auth is not enabled in your Firebase project.";
+  if (code === "auth/invalid-api-key") return "The Firebase API key is invalid. Check your .env file.";
+  if (error?.message?.includes("Cannot reach backend")) return "Cannot reach backend. Ensure FastAPI is running.";
+  if (error?.message?.includes("401") || error?.message?.includes("Unauthorized")) return "Backend rejected your token.";
+  return error?.message || "Google login failed.";
 }
 
 export default function App() {
   const [user, setUser] = useState(null);
   const [idToken, setIdToken] = useState("");
   const [isAccessGranted, setIsAccessGranted] = useState(false);
-  const [text, setText] = useState("");
-  const [result, setResult] = useState(null);
-  const [error, setError] = useState("");
   const [authLoading, setAuthLoading] = useState(false);
-  const [analyzeLoading, setAnalyzeLoading] = useState(false);
-  const [analysisStep, setAnalysisStep] = useState("");
+  const [authError, setAuthError] = useState("");
 
-  const canAnalyze = useMemo(() => Boolean(user && idToken && isAccessGranted), [user, idToken, isAccessGranted]);
-
-  async function handleGoogleLogin() {
-    setError("");
+  const handleGoogleLogin = useCallback(async () => {
+    setAuthError("");
     setAuthLoading(true);
-
     try {
-      console.log("Opening Firebase popup...");
       const credentials = await signInWithPopup(auth, googleProvider);
-      console.log("Popup success! User:", credentials.user.email);
-      
       const token = await credentials.user.getIdToken();
-      console.log("Got ID token, verifying with backend...");
-
-      // Keep Firebase sign-in state first so user can see auth succeeded.
       setUser(credentials.user);
       setIdToken(token);
       setIsAccessGranted(false);
-
-      // Send token to backend so middleware can verify Firebase auth.
       await verifyAccess(token);
-      console.log("Backend verification successful!");
       setIsAccessGranted(true);
     } catch (err) {
       console.error("Auth Error:", err);
-      const code = err?.code || "";
-      const isFirebasePopupError = code.startsWith("auth/");
-
-      if (isFirebasePopupError) {
+      if (err?.code?.startsWith("auth/")) {
         await signOut(auth).catch(() => null);
         setUser(null);
         setIdToken("");
         setIsAccessGranted(false);
       }
-
-      setError(mapAuthError(err));
+      setAuthError(mapAuthError(err));
     } finally {
       setAuthLoading(false);
     }
-  }
+  }, []);
 
-  async function handleLogout() {
-    setError("");
+  const handleLogout = useCallback(async () => {
     setAuthLoading(true);
-
     try {
       await signOut(auth);
       setUser(null);
       setIdToken("");
       setIsAccessGranted(false);
-      setResult(null);
     } catch (err) {
-      setError(err?.message || "Logout failed.");
+      setAuthError(err?.message || "Logout failed.");
     } finally {
       setAuthLoading(false);
     }
-  }
+  }, []);
 
-  async function handleAnalyze() {
-    if (!canAnalyze) {
-      setError("Please log in before analyzing text.");
-      return;
-    }
+  const getToken = useCallback(async () => {
+    if (!user) throw new Error("No user logged in.");
+    const fresh = await getFreshToken(user);
+    setIdToken(fresh);
+    return fresh;
+  }, [user]);
 
-    setError("");
-    setAnalyzeLoading(true);
-    setAnalysisStep("Searching the web for context...");
-    const stepTimer1 = setTimeout(() => setAnalysisStep("Running fact-check agents..."), 8000);
-    const stepTimer2 = setTimeout(() => setAnalysisStep("Building final verdict..."), 20000);
-
-    try {
-      const freshToken = await getFreshToken(user);
-      setIdToken(freshToken);
-      const payload = await analyzeNews(freshToken, text);
-
-      setResult({
-        prediction: payload.label || payload.analysis?.final_verdict || "Unknown",
-        confidence: payload.confidence ?? payload.analysis?.confidence,
-        explanation:
-          payload.report?.report ||
-          (Array.isArray(payload.analysis?.reasoning)
-            ? payload.analysis.reasoning.join(" ")
-            : payload.analysis?.reasoning) ||
-          "No explanation returned.",
-      });
-    } catch (err) {
-      setError(err?.message || "Unable to complete analysis.");
-    } finally {
-      clearTimeout(stepTimer1);
-      clearTimeout(stepTimer2);
-      setAnalysisStep("");
-      setAnalyzeLoading(false);
-    }
-  }
+  const isAuthenticated = Boolean(user && idToken && isAccessGranted);
 
   return (
-    <main className="app-shell">
-      <div className="background-glow" aria-hidden="true" />
-      <div className="container">
-        <header className="hero">
-          <p className="tag">Fake News Detection</p>
-          <h1>Analyze claims with AI-backed insight</h1>
-          <p className="subtitle">
-            Authenticate with Google, submit text, and get a quick prediction with confidence and
-            explanation.
-          </p>
-        </header>
-
-        <GoogleLogin
-          user={user}
-          loading={authLoading}
-          isAccessGranted={isAccessGranted}
-          onLogin={handleGoogleLogin}
-          onLogout={handleLogout}
-        />
-
-        <AnalyzerForm
-          text={text}
-          onTextChange={setText}
-          onAnalyze={handleAnalyze}
-          loading={analyzeLoading}
-          disabled={!canAnalyze}
-          analysisStep={analysisStep}
-        />
-
-        {error ? <p className="error-box">{error}</p> : null}
-
-        <ResultCard result={result} />
-      </div>
-    </main>
+    <Routes>
+      <Route
+        path="/"
+        element={
+          isAuthenticated ? (
+            <Navigate to="/analyze" replace />
+          ) : (
+            <LoginPage
+              onLogin={handleGoogleLogin}
+              loading={authLoading}
+              error={authError}
+            />
+          )
+        }
+      />
+      <Route
+        path="/analyze"
+        element={
+          isAuthenticated ? (
+            <AnalyzePage
+              user={user}
+              getToken={getToken}
+              onLogout={handleLogout}
+            />
+          ) : (
+            <Navigate to="/" replace />
+          )
+        }
+      />
+      <Route
+        path="/history"
+        element={
+          isAuthenticated ? (
+            <HistoryPage
+              user={user}
+              getToken={getToken}
+              onLogout={handleLogout}
+            />
+          ) : (
+            <Navigate to="/" replace />
+          )
+        }
+      />
+    </Routes>
   );
 }

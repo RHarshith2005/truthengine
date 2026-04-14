@@ -103,3 +103,19 @@ export async function analyzeNews(token, text) {
     throw err;
   }
 }
+
+export async function fetchHistory(token) {
+  try {
+    const response = await requestWithHostFallback("/api/v1/history", {
+      method: "GET",
+      headers: getAuthHeaders(token),
+    });
+
+    return parseResponse(response, "Failed to fetch analysis history.");
+  } catch (err) {
+    if (err?.name === "TypeError") {
+      throw buildBackendUnavailableError();
+    }
+    throw err;
+  }
+}
